@@ -45,7 +45,6 @@ def parse_environment_config(env_config_str, job_id):
     An EnvironmentConfig.
   """
   if env_config_str:
-    ssh_port = -1
     env_config_json = json.loads(env_config_str)
     cluster = env_config_json.get("cluster")
     if not cluster:
@@ -60,33 +59,35 @@ def parse_environment_config(env_config_str, job_id):
         if host == "127.0.0.1":
           host = "localhost"
         port = int(port)
-        if ssh_port == -1:
-          ssh_port = port
-        elif ssh_port != port:
-          raise ValueError("Inconsistent ssh ports across tasks %d != %d." %
-                           (ssh_port, port))
-        hosts.append(host)
-        pools[pool_type].append(host)
+        if pool_type != "ps":
+          hosts.append((host, port))
+        pools[pool_type].append((host, port))
+    
     is_chief = False
     has_chief = "chief" in pools
-    if (env_config_json["task"]["type"] == "master" or
-        env_config_json["task"]["type"] == "chief"):
+    task_type = env_config_json["task"]["type"]
+    task_index = int(env_config_json["task"]["index"])
+    port = None
+
+    if task_type in ["master", "chief"]:
       is_chief = True
-      if int(env_config_json["task"]["index"]) != 0:
+      if task_index != 0:
         raise ValueError("Only one master node is expected.")
-    elif ((not has_chief) and
-          (env_config_json["task"]["type"] == "worker") and
-          int(env_config_json["task"]["index"]) == 0):
-      is_chief = True
-      pools["chief"].append(pools["worker"].pop(0))
-    elif env_config_json["task"]["type"] != "worker":
-      raise ValueError("Unexpected task type for Horovod training: %s." %
-                       env_config_json["task"]["type"])
-    return EnvironmentConfig(hosts=hosts, port=port, is_chief=is_chief,
+      port = pools["chief"][task_index][1]
+    elif task_type == "worker":
+      port = pools[task_type][task_index][1]
+      if not has_chief:
+        pools["chief"].append(pools["worker"].pop(0))
+        if task_index == 0:
+          is_chief = True
+    else:
+      raise ValueError("Unexpected task type for Horovod training: %s." % task_type)
+    
+    return EnvironmentConfig(hosts=hosts, port=2222, is_chief=is_chief,
                              pools=pools, job_id=job_id)
   else:
-    return EnvironmentConfig(hosts=["localhost"], port=2222, is_chief=True,
-                             pools={"chief": ["localhost"]}, job_id=job_id)
+    return EnvironmentConfig(hosts=[("localhost", 2222)], port=2222, is_chief=True,
+                             pools={"chief": [("localhost", 2222)]}, job_id=job_id)
 
 
 def start_ssh_server(port, is_chief):
@@ -98,17 +99,17 @@ def start_ssh_server(port, is_chief):
     raise OSError("SSH server did not start successfully.")
 
 
-def wait_for_ssh_servers(hosts, port, timeout_seconds):
+def wait_for_ssh_servers(hosts, timeout_seconds):
   deadline_datetime = datetime.datetime.utcnow() + datetime.timedelta(
       seconds=timeout_seconds)
   unavailable_hosts = []
   while datetime.datetime.utcnow() < deadline_datetime:
     unavailable_hosts = []
-    for host in hosts:
+    for host, port in hosts:
       ssh_command = ["ssh", "-q", host, "-p", str(port), "true"]
       result = subprocess.call(ssh_command)
       if result != 0:
-        unavailable_hosts.append(host)
+        unavailable_hosts.append((host, port))
     if not unavailable_hosts:
       return
     # Retry in 1 second.
@@ -125,7 +126,14 @@ def run_horovod(env_config, jobs_per_host, args):
   del env["TF_CONFIG"]
 
   num_jobs = len(env_config.hosts) * jobs_per_host
-  hosts = ",".join("%s:%d" % (h, jobs_per_host) for h in env_config.hosts)
+  hosts, ports = zip(*env_config.hosts)
+  hosts = ",".join("%s:%d" % (h, jobs_per_host) for h in hosts)
+  same_port = not ports or ports.count(ports[0]) == len(ports)
+  if not same_port:
+    raise ValueError("Inconsistent ssh ports across tasks.")
+
+  env['NCCL_REDUCERS'] = ','.join('{}:{}'.format(h, p) for h, p in env_config.pools["ps"])
+
   horovod_command = [
       "horovodrun", "--ssh-port", str(env_config.port), "-H",
       hosts, "--num-proc", str(num_jobs)
@@ -167,7 +175,7 @@ def main():
   job_id = os.environ.get("CLOUD_ML_JOB_ID", "localrun")
 
   env_config = parse_environment_config(env_config_str, job_id)
-  print (env_config, env_config.pools, env_config.hosts, os.environ)
+  print (env_config, os.environ)
   if os.environ.get("STAGE_GCS_PATH", False):
     copy_files_recursively(
         os.environ.get("STAGE_GCS_PATH"),
@@ -180,8 +188,7 @@ def main():
     for retry in range(max_num_retries):
       staging_timeout_seconds = int(
           os.environ.get("TASK_STARTUP_TIMEOUT_SECONDS", 600))
-      wait_for_ssh_servers(env_config.hosts, env_config.port,
-                           staging_timeout_seconds)
+      wait_for_ssh_servers(env_config.hosts, staging_timeout_seconds)
       if os.environ.get("BENCHMARK_NETWORK", False):
         benchmark_network(env_config)
       num_gpus = _get_available_gpus()

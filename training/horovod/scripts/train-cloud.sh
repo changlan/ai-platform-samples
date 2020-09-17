@@ -80,6 +80,9 @@ gcloud beta ai-platform jobs submit training ${JOB_NAME} \
     --master-machine-type ${MACHINE_TYPE} \
     --master-accelerator count=${GPU_COUNT},type=${GPU_TYPE} \
     ${WORKER_CONFIG} \
+    --parameter-server-image-uri ${PS_IMAGE_URI} \
+    --parameter-server-machine-type n1-highcpu-16 \
+    --parameter-server-count ${MACHINE_COUNT} \
     --scale-tier CUSTOM \
     --project ${PROJECT_ID}
 
