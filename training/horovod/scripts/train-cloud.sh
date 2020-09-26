@@ -14,6 +14,7 @@
 # limitations under the License.
 # ==============================================================================
 # This scripts performs cloud training for a Horovod model.
+set -e
 echo "Training cloud ML model"
 
 # MODEL_NAME: the name of model directory. The directory should contain 
@@ -82,7 +83,7 @@ gcloud beta ai-platform jobs submit training ${JOB_NAME} \
     ${WORKER_CONFIG} \
     --parameter-server-image-uri ${PS_IMAGE_URI} \
     --parameter-server-machine-type n1-highcpu-16 \
-    --parameter-server-count ${MACHINE_COUNT} \
+    --parameter-server-count $((MACHINE_COUNT * 3)) \
     --scale-tier CUSTOM \
     --project ${PROJECT_ID}
 
