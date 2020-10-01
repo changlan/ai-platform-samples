@@ -39,7 +39,7 @@ IMAGE_REPO_NAME=horovod_${MODEL_NAME}
 PROJECT_ID=${PROJECT_ID:-$(gcloud config list project --format "value(core.project)")}
 
 # IMAGE_URI: the complete URI location for Cloud Container Registry
-IMAGE_URI=gcr.io/$(echo ${PROJECT_ID} | tr : /)/${IMAGE_REPO_NAME}
+IMAGE_URI=${IMAGE_URI:-gcr.io/$(echo ${PROJECT_ID} | tr : /)/${IMAGE_REPO_NAME}}
 
 # JOB_NAME: the name of your job running on AI Platform.
 JOB_NAME=${MODEL_NAME}_$(date +%Y%m%d_%H%M%S)
