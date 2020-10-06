@@ -1,4 +1,4 @@
-FROM gcr.io/deeplearning-platform-release/tf-gpu.1-15
+FROM gcr.io/deeplearning-platform-release/tf-gpu.1-15:m51
 
 # Install OpenSSH, CUDA 10.0 and NCCL
 RUN apt-get update && \
